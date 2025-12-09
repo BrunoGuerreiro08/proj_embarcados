@@ -1,35 +1,35 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/display.h>
-#include <math.h>
+#include <zephyr/random/random.h> // Necessário para gerar a semente inicial
+#include <string.h>
 #include <stdlib.h>
 
-/* Estruturas para 3D */
-typedef struct { float x, y, z; } Point3D;
-typedef struct { int16_t x, y; } Point2D;
-
-/* Vértices do Cubo */
-Point3D vertices[8] = {
-    {-1, -1, -1}, {1, -1, -1}, {1, 1, -1}, {-1, 1, -1},
-    {-1, -1, 1},  {1, -1, 1},  {1, 1, 1},  {-1, 1, 1}
-};
-
-/* Arestas */
-int edges[12][2] = {
-    {0,1}, {1,2}, {2,3}, {3,0}, {4,5}, {5,6}, {6,7}, {7,4},
-    {0,4}, {1,5}, {2,6}, {3,7}
-};
-
-/* Buffer simples para desenhar (ajustado para o tamanho do display 240x320) */
-/* Nota: Em RGB565, cada pixel ocupa 2 bytes */
+/* Configurações do Display */
 #define SCREEN_WIDTH 240
 #define SCREEN_HEIGHT 320
-#define BUF_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT * 2)
+#define BUF_SIZE (SCREEN_WIDTH * SCREEN_HEIGHT * 2) // RGB565 = 2 bytes por pixel
 
-/* Alocar buffer na memória (pode precisar da SDRAM configurada no overlay se não couber na RAM interna) */
+/* Configurações do Game of Life */
+#define CELL_SIZE 10 // Tamanho visual da célula em pixels (ajuste para ver melhor)
+#define GRID_W (SCREEN_WIDTH / CELL_SIZE)
+#define GRID_H (SCREEN_HEIGHT / CELL_SIZE)
+
+/* Cores (RGB565) */
+#define COLOR_ALIVE 0xFFFF // Branco
+#define COLOR_DEAD  0x0000 // Preto
+
+/* Buffers de Memória */
 static uint8_t frame_buffer[BUF_SIZE]; 
 
-/* Função auxiliar para desenhar pixel no buffer (formato RGB565) */
+/* Grades de estado: 0 = Morto, 1 = Vivo */
+/* Usamos static para não estourar a stack */
+static uint8_t grid[GRID_H][GRID_W];
+static uint8_t next_grid[GRID_H][GRID_W];
+
+/* --- Funções de Desenho (Baseadas no seu código) --- */
+
+/* Desenha um pixel único no buffer RGB565 */
 void draw_pixel(int x, int y, uint16_t color) {
     if (x < 0 || x >= SCREEN_WIDTH || y < 0 || y >= SCREEN_HEIGHT) return;
     
@@ -38,40 +38,69 @@ void draw_pixel(int x, int y, uint16_t color) {
     frame_buffer[index + 1] = color & 0xFF; // Byte baixo
 }
 
-/* Algoritmo de Bresenham para linhas */
-void draw_line(Point2D p1, Point2D p2, uint16_t color) {
-    int x0 = p1.x, y0 = p1.y, x1 = p2.x, y1 = p2.y;
-    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-    int err = dx + dy, e2;
+/* Desenha um quadrado preenchido (Célula) */
+void draw_cell(int grid_x, int grid_y, uint16_t color) {
+    int start_x = grid_x * CELL_SIZE;
+    int start_y = grid_y * CELL_SIZE;
 
-    while (1) {
-        draw_pixel(x0, y0, color);
-        if (x0 == x1 && y0 == y1) break;
-        e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
+    for (int y = 0; y < CELL_SIZE; y++) {
+        for (int x = 0; x < CELL_SIZE; x++) {
+            // Pequena borda de 1px para ver a grade (opcional, remova o -1 para sólido)
+            if (x < CELL_SIZE - 1 && y < CELL_SIZE - 1) {
+                draw_pixel(start_x + x, start_y + y, color);
+            }
+        }
     }
 }
 
-Point2D project(Point3D p) {
-    float fov = 200.0;
-    float viewer_distance = 3.5;
-    float factor = fov / (viewer_distance + p.z);
-    return (Point2D){
-        .x = (int16_t)(p.x * factor + SCREEN_WIDTH / 2),
-        .y = (int16_t)(p.y * factor + SCREEN_HEIGHT / 2)
-    };
+/* --- Lógica do Game of Life --- */
+
+/* Inicializa a grade com valores aleatórios */
+void init_grid() {
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W; x++) {
+            // 50% de chance de começar vivo
+            grid[y][x] = (sys_rand32_get() % 2); 
+        }
+    }
 }
 
-void rotate(Point3D *p, float angleX, float angleY) {
-    float radX = angleX, radY = angleY;
-    float newX = p->x * cos(radY) - p->z * sin(radY);
-    float newZ = p->x * sin(radY) + p->z * cos(radY);
-    p->x = newX; p->z = newZ;
-    float newY = p->y * cos(radX) - p->z * sin(radX);
-    newZ = p->y * sin(radX) + p->z * cos(radX);
-    p->y = newY; p->z = newZ;
+/* Conta vizinhos (Lógica Toroidal/Wrap-around: bordas se conectam) */
+int count_neighbors(int x, int y) {
+    int sum = 0;
+    for (int i = -1; i < 2; i++) {
+        for (int j = -1; j < 2; j++) {
+            if(i == 0 && j == 0) continue; // Não contar a própria célula
+
+            // Modulo aritmético para bordas infinitas
+            int col = (x + j + GRID_W) % GRID_W;
+            int row = (y + i + GRID_H) % GRID_H;
+            
+            sum += grid[row][col];
+        }
+    }
+    return sum;
+}
+
+/* Calcula a próxima geração */
+void compute_next_generation() {
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W; x++) {
+            int state = grid[y][x];
+            int neighbors = count_neighbors(x, y);
+
+            if (state == 0 && neighbors == 3) {
+                next_grid[y][x] = 1; // Reprodução
+            } else if (state == 1 && (neighbors < 2 || neighbors > 3)) {
+                next_grid[y][x] = 0; // Morte por solidão ou superpopulação
+            } else {
+                next_grid[y][x] = state; // Permanece igual (estase)
+            }
+        }
+    }
+
+    // Copia next_grid para grid atual
+    memcpy(grid, next_grid, sizeof(grid));
 }
 
 void main(void) {
@@ -88,29 +117,29 @@ void main(void) {
     desc.height = SCREEN_HEIGHT;
     desc.pitch = SCREEN_WIDTH;
 
-    float angle = 0.05;
+    /* Inicializa o jogo */
+    init_grid();
 
     while (1) {
-        /* 1. Limpar buffer (pintar de preto) */
+        /* 1. Limpar buffer (fundo preto) */
         memset(frame_buffer, 0, BUF_SIZE);
 
-        /* 2. Calcular e desenhar */
-        Point2D projected[8];
-        for (int i = 0; i < 8; i++) {
-            Point3D p = vertices[i];
-            rotate(&p, angle, angle * 0.5);
-            projected[i] = project(p);
-            // Rotacionar vértices originais para animação
-            rotate(&vertices[i], 0.02, 0.01);
-        }
-
-        for (int i = 0; i < 12; i++) {
-            draw_line(projected[edges[i][0]], projected[edges[i][1]], 0xFFFF); // Branco
+        /* 2. Desenhar o estado atual no buffer */
+        for (int y = 0; y < GRID_H; y++) {
+            for (int x = 0; x < GRID_W; x++) {
+                if (grid[y][x] == 1) {
+                    draw_cell(x, y, COLOR_ALIVE);
+                }
+            }
         }
 
         /* 3. Enviar buffer para a tela */
         display_write(display_dev, 0, 0, &desc, frame_buffer);
 
-        k_sleep(K_MSEC(50));
+        /* 4. Calcular a lógica para o próximo frame */
+        compute_next_generation();
+
+        /* Controle de velocidade da simulação */
+        k_sleep(K_MSEC(100));
     }
 }
