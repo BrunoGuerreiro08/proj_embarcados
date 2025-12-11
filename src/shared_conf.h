@@ -25,4 +25,7 @@ extern uint8_t grid[GRID_H][GRID_W];
 /* Mutex para evitar que o desenho leia enquanto a lógica escreve */
 extern struct k_mutex game_mutex;
 
+extern struct k_event game_events;
+#define EVENT_RESET_GRID_BIT  (1 << 0)
+
 #endif

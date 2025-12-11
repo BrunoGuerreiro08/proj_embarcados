@@ -5,11 +5,12 @@
 /* Definição das prioridades e stack */
 #define LOGIC_PRIORITY 1 /* Alta prioridade */
 #define LOGIC_STACK_SIZE 1024
+//#define EVENT_RESET_GRID_BIT (1 << 0)
 
 /* Definição real das variáveis compartilhadas */
 uint8_t grid[GRID_H][GRID_W];
 struct k_mutex game_mutex;
-
+struct k_event game_events;
 /* Buffer interno para cálculo (não precisa ser compartilhado) */
 static uint8_t next_grid[GRID_H][GRID_W];
 
@@ -62,14 +63,24 @@ void compute_next_generation() {
 /* Função da Thread */
 void logic_entry_point(void *p1, void *p2, void *p3) {
     k_mutex_init(&game_mutex); /* Inicializa o mutex uma vez */
+    k_event_init(&game_events);
+
+    k_mutex_lock(&game_mutex, K_FOREVER);
     init_grid();
+    k_mutex_unlock(&game_mutex);
 
     while (1) {
-        compute_next_generation();
-        
-        /* Dorme para liberar a CPU para a tarefa de desenho (prioridade menor) */
-        /* Se não dormir, a tarefa de média prioridade nunca roda */
-        k_sleep(K_MSEC(100)); 
+        //compute_next_generation();
+        uint32_t events = k_event_wait(&game_events, EVENT_RESET_GRID_BIT, true, K_MSEC(100));
+        if (events & EVENT_RESET_GRID_BIT) {
+            // Se recebeu o evento: Reseta
+            k_mutex_lock(&game_mutex, K_FOREVER);
+            init_grid();
+            k_mutex_unlock(&game_mutex);
+        } else {
+            // Se deu timeout (passou 100ms sem reset): Calcula jogo
+            compute_next_generation();
+        }
     }
 }
 

@@ -11,6 +11,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
+#include "shared_conf.h"
 
 #include <stdarg.h>
 #include <string.h>
@@ -133,6 +134,16 @@ static int cmd_showdrop(const struct shell *sh, size_t argc, char **argv)
     return 0;
 }
 
+static int cmd_restart(const struct shell *sh, size_t argc, char **argv)
+{
+    ARG_UNUSED(sh);
+    ARG_UNUSED(argc);
+    ARG_UNUSED(argv);
+
+    k_event_post(&game_events, EVENT_RESET_GRID_BIT);
+    return 0;
+}
+
 // static int cmd_cpu_usage(const struct shell *sh, size_t argc, char **argv)
 // {
 //     ARG_UNUSED(argc);
@@ -165,6 +176,7 @@ static int cmd_showdrop(const struct shell *sh, size_t argc, char **argv)
 SHELL_CMD_REGISTER(echo, NULL, "Echo back text using terminal", cmd_echo);
 SHELL_CMD_REGISTER(uptime, NULL, "Show uptime (ms)", cmd_uptime);
 SHELL_CMD_REGISTER(showdrop, NULL, "Dropped terminal messages", cmd_showdrop);
+SHELL_CMD_REGISTER(restart, NULL, "Restart the Game", cmd_restart);
 // SHELL_CMD_REGISTER(cpu, NULL, "Show CPU usage per thread", cmd_cpu_usage);
 
 /* ---------------- Public Initialization ---------------- */

@@ -34,7 +34,6 @@
 #error "Unsupported board: led1 devicetree alias is not defined"
 #endif
 
-
 struct led {
 	struct gpio_dt_spec spec;
 	uint8_t num;
@@ -83,8 +82,8 @@ K_THREAD_DEFINE(blink0_id, STACKSIZE, blink0, NULL, NULL, NULL,PRIORITY, 0, 0);
 
 int main(void)
 {
-    // terminal_init();
-    // term_print("Shell ready. Try: echo, uptime, showdrop\n");
+    terminal_init();
+    term_print("Shell ready. Try: echo, uptime, showdrop\n");
 
 	return 0;
 }
