@@ -1,6 +1,8 @@
 .vscode/
 /build/
 
+*.code-workspace
+
 # Cache files, generates by Zephir
 .temp/
 .libs/
