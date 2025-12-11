@@ -1,0 +1,21 @@
+#include <zephyr/dt-bindings/gpio/gpio.h>
+
+/ {
+	aliases {
+		led1 = &led1;
+        rng = &rng;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led1: led_1 {
+			gpios = <&gpioa 8 GPIO_ACTIVE_HIGH>; // Isso é porta 14 acho, tem que testar
+			label = "LED 1";
+		};
+	};
+
+};
+
+&rng {
+	status = "okay";
+};
