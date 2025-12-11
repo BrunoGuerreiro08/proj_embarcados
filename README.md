@@ -11,9 +11,9 @@ embutida na placa.
 > Plataforma alvo: STM32F429I-DISC1
 
 ## To do list:
-[ ] Está estourando a RAM, tem que achar uma solução pra isso
-[ ] Mover os arquivos .h para a pasta includes
-[ ] Criar o comando de pegar infos do sistema
-[ ] Criar o comando de resetar o jogo
-[ ] Criar o comando de pegar infos do jogo
-[ ] Corrigir prioridades das threads
+- [ ] Está estourando a RAM, tem que achar uma solução pra isso
+- [ ] Mover os arquivos .h para a pasta includes
+- [ ] Criar o comando de pegar infos do sistema
+- [ ] Criar o comando de resetar o jogo
+- [ ] Criar o comando de pegar infos do jogo
+- [ ] Corrigir prioridades das threads
