@@ -25,7 +25,13 @@ extern uint8_t grid[GRID_H][GRID_W];
 /* Mutex para evitar que o desenho leia enquanto a lógica escreve */
 extern struct k_mutex game_mutex;
 
-extern struct k_event game_events;
+/* Evento para sinalizar reinício do grid */
 #define EVENT_RESET_GRID_BIT  (1 << 0)
+extern struct k_event game_events;
+
+// Se a thread ID for 'logic_tid'
+extern const k_tid_t logic_tid;
+// Nova função GoL
+extern uint32_t gol_get_alive_count(void);
 
 #endif
