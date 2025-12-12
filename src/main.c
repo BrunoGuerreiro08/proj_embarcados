@@ -11,8 +11,7 @@
 #include <zephyr/sys/__assert.h>
 
 #include <string.h>
-
-#include "../includes/terminal.h"
+#include <terminal.h>
 
 #define ZEPHYR_USER_NODE DT_PATH(zephyr_user)
 
