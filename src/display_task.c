@@ -1,4 +1,4 @@
-#include "shared_conf.h"
+#include <shared_conf.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/display.h>
 #include <string.h>

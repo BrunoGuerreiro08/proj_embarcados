@@ -1,4 +1,4 @@
-#include "shared_conf.h"
+#include <shared_conf.h>
 #include <zephyr/random/random.h>
 #include <string.h>
 
@@ -13,6 +13,7 @@ struct k_mutex game_mutex;
 struct k_event game_events;
 /* Buffer interno para cálculo (não precisa ser compartilhado) */
 static uint8_t next_grid[GRID_H][GRID_W];
+static uint32_t alive_count = 0;
 
 /* --- Lógica do Game of Life (Mantida idêntica) --- */
 
@@ -37,8 +38,17 @@ int count_neighbors(int x, int y) {
     return sum;
 }
 
+// --- Contagem e Status ---
+uint32_t gol_get_alive_count() {
+    // k_mutex_lock(&game_mutex, K_FOREVER); // Não é necessário travar aqui, pois o grid é lido
+    // A contagem será feita na thread principal do GoL (melhor desempenho)
+    return alive_count;
+}
+
 void compute_next_generation() {
     /* Calcula tudo no buffer temporário primeiro (não precisa travar mutex aqui) */
+    uint32_t count = 0;
+
     for (int y = 0; y < GRID_H; y++) {
         for (int x = 0; x < GRID_W; x++) {
             int state = grid[y][x];
@@ -57,6 +67,18 @@ void compute_next_generation() {
     /* BLOQUEIA para atualizar o grid oficial */
     k_mutex_lock(&game_mutex, K_FOREVER);
     memcpy(grid, next_grid, sizeof(grid));
+
+    // Calcula a contagem de vivos após a atualização (aproveitando o mutex)
+    for (int y = 0; y < GRID_H; y++) {
+        for (int x = 0; x < GRID_W; x++) {
+            if (grid[y][x] == 1) {
+                count++;
+            }
+        }
+    }
+
+    alive_count = count;
+
     k_mutex_unlock(&game_mutex);
 }
 
