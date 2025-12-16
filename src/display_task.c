@@ -49,7 +49,7 @@ void display_entry_point(void *p1, void *p2, void *p3) {
 
     while (1) {
         /* 1. Limpar buffer */
-        memset(frame_buffer, 0, BUF_SIZE);
+        //memset(frame_buffer, 0, BUF_SIZE);
 
         /* 2. Desenhar o estado atual */
         /* BLOQUEIA: Precisamos garantir que o grid não mude no meio do desenho */
@@ -59,6 +59,8 @@ void display_entry_point(void *p1, void *p2, void *p3) {
             for (int x = 0; x < GRID_W; x++) {
                 if (grid[y][x] == 1) {
                     draw_cell(x, y, COLOR_ALIVE);
+                }else{
+                    draw_cell(x, y, 0x0000);
                 }
             }
         }

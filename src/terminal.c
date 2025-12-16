@@ -1,19 +1,16 @@
 /*
  * terminal.c – isolated terminal module for Zephyr
  *
- * Features:
- * - non-reentrant print via msgq + timer + work
- * - shell commands (echo, uptime, showdrop, sysinfo)
- * - simple public init + print API
+ * Modified to fix starvation: Uses a dedicated thread instead of System Workqueue
  */
 
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
-#include <zephyr/sys/util.h>       // Utilitários gerais
-#include <zephyr/kernel/thread.h>  // Necessário para k_thread_foreach_all
+#include <zephyr/sys/util.h>
+#include <zephyr/kernel/thread.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
-#include <shared_conf.h> // Assumindo que este define k_event_post e EVENT_RESET_GRID_BIT
+#include <shared_conf.h> 
 
 #include <stdarg.h>
 #include <string.h>
@@ -24,7 +21,14 @@
 
 #define PRINT_MSG_MAXLEN 256
 #define PRINT_MSGQ_DEPTH 32
-#define PRINT_FLUSH_MS   10
+
+/* * DEFINIÇÃO DE PRIORIDADE CRÍTICA:
+ * Lógica: -1 (Máxima)
+ * Terminal: 4 (Alta - Interrompe o display para imprimir rápido)
+ * Display: 5 (Média - Roda quando ninguém mais precisa)
+ */
+#define TERMINAL_PRIORITY 4 
+#define TERMINAL_STACK_SIZE 1024
 
 /* ---------------- Internal Types ---------------- */
 
@@ -39,14 +43,13 @@ K_MSGQ_DEFINE(print_msgq, sizeof(struct print_msg), PRINT_MSGQ_DEPTH, 4);
 
 static atomic_t dropped_msgs = ATOMIC_INIT(0);
 
-K_MUTEX_DEFINE(print_mutex); // Tornando o mutex acessível (se necessário)
+K_MUTEX_DEFINE(print_mutex); 
 
-static struct k_work print_work;
-static struct k_timer print_timer;
+/* REMOVIDO: k_work e k_timer (causadores do travamento) */
 
 /* ---------------- Internal Forward Decls ---------------- */
-static void print_work_handler(struct k_work *work);
-static void print_timer_handler(struct k_timer *timer);
+/* A função handler agora é o loop da thread dedicada */
+void terminal_thread_entry(void *p1, void *p2, void *p3);
 
 /* ---------------- Public Print API ---------------- */
 
@@ -71,73 +74,59 @@ void term_print(const char *fmt, ...)
         msg.len = needed;
     }
 
+    /* Coloca na fila. A thread dedicada acordará imediatamente se tiver prioridade. */
     if (k_msgq_put(&print_msgq, &msg, K_NO_WAIT) != 0) {
         atomic_inc(&dropped_msgs);
         return;
-  	}
-
-    /* arm timer so flush happens soon */
-    k_timer_start(&print_timer, K_MSEC(PRINT_FLUSH_MS), K_NO_WAIT);
+    }
 }
 
-/* ---------------- Internal Work/Timer ---------------- */
+/* ---------------- Thread Logic (Substitui Work/Timer) ---------------- */
 
-static void print_work_handler(struct k_work *work)
+void terminal_thread_entry(void *p1, void *p2, void *p3)
 {
     struct print_msg msg;
 
-    k_mutex_lock(&print_mutex, K_FOREVER);
-
-    while (k_msgq_get(&print_msgq, &msg, K_NO_WAIT) == 0) {
-        // Usa printk para a saída real no console/shell
-        printk("%.*s", msg.len, msg.payload);
+    while (1) {
+        /* * K_FOREVER: A thread fica suspensa aqui consumindo 0% de CPU 
+         * até que k_msgq_put seja chamado em term_print.
+         */
+        if (k_msgq_get(&print_msgq, &msg, K_FOREVER) == 0) {
+            
+            k_mutex_lock(&print_mutex, K_FOREVER);
+            // Saída real para o console
+            printk("%.*s", msg.len, msg.payload);
+            k_mutex_unlock(&print_mutex);
+        }
     }
-
-    k_mutex_unlock(&print_mutex);
 }
 
-static void print_timer_handler(struct k_timer *timer)
-{
-    k_work_submit(&print_work);
-}
+/* Inicializa a thread automaticamente com Prioridade 4 */
+K_THREAD_DEFINE(terminal_tid, TERMINAL_STACK_SIZE, terminal_thread_entry, NULL, NULL, NULL,
+                TERMINAL_PRIORITY, 0, 0);
+
 
 /* ---------------- Auxiliary Funcs (Threads Info) ---------------- */
 
 static void print_single_thread(const struct k_thread *thread, void *dummy)
 {
-    // [NOVA MUDANÇA] Buffer estático para armazenar a string de estado da thread
-    // O Zephyr define K_THREAD_STATE_STR_MAX_LEN (cerca de 10)
     static char state_buf[20]; 
-
-    // Crie um ponteiro não-const para a thread para satisfazer as APIs do kernel
     struct k_thread *t = (struct k_thread *)thread; 
     size_t unused_stack_size;
     uint32_t total_stack_size = 0;
 
     const char *thread_name = k_thread_name_get(t); 
-    const char *state_str; // Ponteiro para a string de estado final
+    const char *state_str;
 
-    // [NOVA MUDANÇA] Obter a string de estado usando o buffer
     state_str = k_thread_state_str(t, state_buf, sizeof(state_buf));
 
-    // Obtém o tamanho total da stack (se disponível)
     if (t->stack_info.size > 0) {
         total_stack_size = t->stack_info.size;
     }
 
-    // Obtém o espaço de stack não utilizado (Requer CONFIG_THREAD_MONITOR=y)
     if (k_thread_stack_space_get(t, &unused_stack_size) == 0) {
-        // Linha 1: Nome da Thread e Endereço
-        term_print("  %-16s (0x%p)", 
-                   thread_name ? thread_name : "N/A", 
-                   (void *)t);
-
-        // Linha 2: Estado e Prioridade
-        term_print("    Estado: %s | Prio: %d", 
-                state_str, // Uso do ponteiro corrigido
-                t->base.prio); 
-
-        // Linha 3: Uso da Stack
+        term_print("  %-16s (0x%p)", thread_name ? thread_name : "N/A", (void *)t);
+        term_print("    Estado: %s | Prio: %d", state_str, t->base.prio); 
         if (total_stack_size > 0) {
             uint32_t used_stack = total_stack_size - (uint32_t)unused_stack_size;
             term_print("    Stack Total: %u | Usado: %u | Livre: %u\n",
@@ -146,12 +135,8 @@ static void print_single_thread(const struct k_thread *thread, void *dummy)
             term_print("    Stack Info: Não disponível ou thread de kernel.\n");
         }
     } else {
-        // Fallback (também usando o state_str corrigido)
         term_print("  %-16s (0x%p) | Estado: %s | Prio: %d | Stack Info: Desconhecida\n", 
-                thread_name ? thread_name : "N/A", 
-                (void *)t,
-                state_str, 
-                t->base.prio);
+                thread_name ? thread_name : "N/A", (void *)t, state_str, t->base.prio);
     }
 }
 
@@ -164,55 +149,36 @@ static int cmd_golinfo(const struct shell *sh, size_t argc, char **argv)
     uint32_t alive = gol_get_alive_count();
     uint32_t total = GRID_H * GRID_W;
     
-    // 1. Cálculo da Densidade em Milésimos (Fixed-Point)
-    // Multiplicamos por 1000 (100 para percentual, 10 para 1 casa decimal)
-    // Usamos um tipo maior (uint64_t) para evitar overflow durante a multiplicação
     uint64_t density_x10 = (uint64_t)alive * 1000ULL / total;
-
-    // 2. Separação:
-    uint32_t density_int = (uint32_t)(density_x10 / 10);    // Parte Inteira (XX)
-    uint32_t density_dec = (uint32_t)(density_x10 % 10);    // Primeiro Decimal (Y)
-    
-    // --- CONWAY'S GOL STATUS ---
+    uint32_t density_int = (uint32_t)(density_x10 / 10);
+    uint32_t density_dec = (uint32_t)(density_x10 % 10);
     
     term_print("--- Conway's GoL Status (Somente Dados do Jogo) ---\n");
-    
-    // Informações da Aplicação (Células Vivas)
     term_print("Células Vivas Atuais: %u / %u\n", alive, total);
-    
-    // Impressão da Densidade Sem Float: (XX.Y %)
-    term_print("Densidade Média: %u.%u %%\n", 
-               density_int, density_dec);
-
+    term_print("Densidade Média: %u.%u %%\n", density_int, density_dec);
     term_print("-------------------------------------------------\n");
 
     return 0;
 }
 
-/* ---------------- Shell Commands ---------------- */
+/* ---------------- Shell Commands (Mantidos Iguais) ---------------- */
 
 static int cmd_echo(const struct shell *sh, size_t argc, char **argv)
 {
     ARG_UNUSED(sh);
-
     if (argc < 2) {
         term_print("Usage: echo <text>\n");
         return 0;
     }
-
     for (size_t i = 1; i < argc; i++) {
         term_print("%s%s", argv[i], (i + 1 < argc) ? " " : "\n");
-  	}
-
+    }
     return 0;
 }
 
 static int cmd_uptime(const struct shell *sh, size_t argc, char **argv)
 {
     ARG_UNUSED(sh);
-    ARG_UNUSED(argc);
-    ARG_UNUSED(argv);
-
     term_print("Uptime: %u ms\n", k_uptime_get_32());
     return 0;
 }
@@ -220,9 +186,6 @@ static int cmd_uptime(const struct shell *sh, size_t argc, char **argv)
 static int cmd_showdrop(const struct shell *sh, size_t argc, char **argv)
 {
     ARG_UNUSED(sh);
-    ARG_UNUSED(argc);
-    ARG_UNUSED(argv);
-
     term_print("Dropped messages: %d\n", atomic_get(&dropped_msgs));
     return 0;
 }
@@ -230,9 +193,6 @@ static int cmd_showdrop(const struct shell *sh, size_t argc, char **argv)
 static int cmd_restart(const struct shell *sh, size_t argc, char **argv)
 {
     ARG_UNUSED(sh);
-    ARG_UNUSED(argc);
-    ARG_UNUSED(argv);
-
     k_event_post(&game_events, EVENT_RESET_GRID_BIT);
     return 0;
 }
@@ -240,17 +200,8 @@ static int cmd_restart(const struct shell *sh, size_t argc, char **argv)
 static int cmd_sysinfo(const struct shell *sh, size_t argc, char **argv)
 {
     ARG_UNUSED(sh);
-    ARG_UNUSED(argc);
-    ARG_UNUSED(argv);
-
-    // A seção de Heap foi ignorada conforme solicitado
-
-    // 2. Exibir Informações de Tarefas
     term_print("--- Informações de Tarefas Instaladas e Runtime ---\n");
-
-    // Itera sobre todas as threads e chama a função de impressão
     k_thread_foreach(print_single_thread, NULL);
-
     term_print("---------------------------------------------------\n");
     return 0;
 }
@@ -267,9 +218,6 @@ SHELL_CMD_REGISTER(golinfo, NULL, "Mostra status e runtime da tarefa GoL (Game o
 
 void terminal_init(void)
 {
-    /* init work + timer */
-    k_work_init(&print_work, print_work_handler);
-    k_timer_init(&print_timer, print_timer_handler, NULL);
-
-    term_print("Terminal initialized.\n");
+    /* A thread já inicia via K_THREAD_DEFINE, apenas notificamos o boot */
+    term_print("Terminal initialized (Priority %d).\n", TERMINAL_PRIORITY);
 }

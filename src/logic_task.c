@@ -3,8 +3,9 @@
 #include <string.h>
 
 /* Definição das prioridades e stack */
-#define LOGIC_PRIORITY 1 /* Alta prioridade */
+#define LOGIC_PRIORITY -1 /* Alta prioridade */
 #define LOGIC_STACK_SIZE 1024
+#define LOGIC_PERIOD_MS 200
 //#define EVENT_RESET_GRID_BIT (1 << 0)
 
 /* Definição real das variáveis compartilhadas */
@@ -40,8 +41,6 @@ int count_neighbors(int x, int y) {
 
 // --- Contagem e Status ---
 uint32_t gol_get_alive_count() {
-    // k_mutex_lock(&game_mutex, K_FOREVER); // Não é necessário travar aqui, pois o grid é lido
-    // A contagem será feita na thread principal do GoL (melhor desempenho)
     return alive_count;
 }
 
@@ -91,8 +90,13 @@ void logic_entry_point(void *p1, void *p2, void *p3) {
     init_grid();
     k_mutex_unlock(&game_mutex);
 
+    int64_t next_run_time = k_uptime_get();
+
     while (1) {
         //compute_next_generation();
+
+        next_run_time += LOGIC_PERIOD_MS;
+
         uint32_t events = k_event_wait(&game_events, EVENT_RESET_GRID_BIT, true, K_MSEC(100));
         if (events & EVENT_RESET_GRID_BIT) {
             // Se recebeu o evento: Reseta
@@ -100,8 +104,20 @@ void logic_entry_point(void *p1, void *p2, void *p3) {
             init_grid();
             k_mutex_unlock(&game_mutex);
         } else {
-            // Se deu timeout (passou 100ms sem reset): Calcula jogo
             compute_next_generation();
+        }
+
+        int64_t now = k_uptime_get();
+        int32_t remaining = (int32_t)(next_run_time - now);
+
+        if (remaining > 0) {
+            /* Se sobrou tempo, dorme e deixa o Display/Terminal rodarem */
+            k_sleep(K_MSEC(remaining));
+            
+        } else {
+            /* DEADLINE MISSED! */
+            //printk("ALERTA: Prazo perdido! Atraso de %d ms\n", remaining);
+            next_run_time = now; 
         }
     }
 }
