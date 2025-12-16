@@ -2,21 +2,17 @@
 #include <zephyr/random/random.h>
 #include <string.h>
 
-/* Definição das prioridades e stack */
-#define LOGIC_PRIORITY -1 /* Alta prioridade */
+// Definição das prioridades e stack
+#define LOGIC_PRIORITY -1 // Alta prioridade 
 #define LOGIC_STACK_SIZE 1024
 #define LOGIC_PERIOD_MS 200
 //#define EVENT_RESET_GRID_BIT (1 << 0)
 
-/* Definição real das variáveis compartilhadas */
 uint8_t grid[GRID_H][GRID_W];
 struct k_mutex game_mutex;
 struct k_event game_events;
-/* Buffer interno para cálculo (não precisa ser compartilhado) */
 static uint8_t next_grid[GRID_H][GRID_W];
 static uint32_t alive_count = 0;
-
-/* --- Lógica do Game of Life (Mantida idêntica) --- */
 
 void init_grid() {
     for (int y = 0; y < GRID_H; y++) {
@@ -45,7 +41,6 @@ uint32_t gol_get_alive_count() {
 }
 
 void compute_next_generation() {
-    /* Calcula tudo no buffer temporário primeiro (não precisa travar mutex aqui) */
     uint32_t count = 0;
 
     for (int y = 0; y < GRID_H; y++) {
@@ -63,7 +58,7 @@ void compute_next_generation() {
         }
     }
 
-    /* BLOQUEIA para atualizar o grid oficial */
+    // BLOQUEIA para atualizar o grid oficial
     k_mutex_lock(&game_mutex, K_FOREVER);
     memcpy(grid, next_grid, sizeof(grid));
 
@@ -81,9 +76,8 @@ void compute_next_generation() {
     k_mutex_unlock(&game_mutex);
 }
 
-/* Função da Thread */
 void logic_entry_point(void *p1, void *p2, void *p3) {
-    k_mutex_init(&game_mutex); /* Inicializa o mutex uma vez */
+    k_mutex_init(&game_mutex); // Inicializa o mutex uma vez
     k_event_init(&game_events);
 
     k_mutex_lock(&game_mutex, K_FOREVER);
@@ -111,17 +105,15 @@ void logic_entry_point(void *p1, void *p2, void *p3) {
         int32_t remaining = (int32_t)(next_run_time - now);
 
         if (remaining > 0) {
-            /* Se sobrou tempo, dorme e deixa o Display/Terminal rodarem */
             k_sleep(K_MSEC(remaining));
             
         } else {
-            /* DEADLINE MISSED! */
             //printk("ALERTA: Prazo perdido! Atraso de %d ms\n", remaining);
             next_run_time = now; 
         }
     }
 }
 
-/* Define e inicia a thread automaticamente no boot */
+// Define e inicia a thread automaticamente no boot
 K_THREAD_DEFINE(logic_tid, LOGIC_STACK_SIZE, logic_entry_point, NULL, NULL, NULL,
                 LOGIC_PRIORITY, 0, 0);

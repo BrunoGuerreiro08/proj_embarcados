@@ -1,9 +1,3 @@
-/*
- * terminal.c – isolated terminal module for Zephyr
- *
- * Modified to fix starvation: Uses a dedicated thread instead of System Workqueue
- */
-
 #include <zephyr/kernel.h>
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/util.h>
@@ -161,7 +155,7 @@ static int cmd_golinfo(const struct shell *sh, size_t argc, char **argv)
     return 0;
 }
 
-/* ---------------- Shell Commands (Mantidos Iguais) ---------------- */
+/* ---------------- Shell Commands ---------------- */
 
 static int cmd_echo(const struct shell *sh, size_t argc, char **argv)
 {
